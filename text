@@ -1,0 +1,48 @@
+Hi Team,
+
+We are implementing a High-Risk Transaction (HRT) step-up authentication POC using PingOne AIC + PingGateway 2026.3, replacing Transmit Security.
+
+— WHAT WE ARE DOING —
+
+1. Browser invokes HRTStepUpJourney via Authorization Code + PKCE:
+   /oauth2/authorize?authIndexType=service&authIndexValue=HRTStepUpJourney&login_hint=<xsmid>&state=<xsmid>
+
+2. After authentication, a Scripted Decision node (StoreXsmid) runs:
+   - Reads xsmid from requestParameters.get('login_hint')
+   - Calls session.setProperty('xsmid', xsmid)
+   - Calls transientState.put('xsmid', xsmid)
+
+3. AIC issues id_token via OIDC Claims Script (HRTOIDCClaimsScript):
+   - Script Type: OIDC Claims
+   - xsmid mapped to profile scope
+   - Resolver: session.getProperty('xsmid')
+
+4. PingGateway receives JWT + xsmid from client, introspects JWT with AIC, matches xsmid claim in JWT with xsmid in request.
+
+— WHAT IS CONFIRMED WORKING —
+
+✅ Full Authorization Code + PKCE flow completes
+✅ OIDC Claims Script runs (hardcoded value appears in JWT)
+✅ StoreXsmid script runs without errors
+✅ xsmid is bound to JWT via s_hash (SHA256 of state)
+
+— WHAT IS FAILING —
+
+❌ session.getProperty('xsmid') returns null in OIDC Claims Script
+❌ xsmid claim not appearing in id_token
+
+— AIC CONFIGURATION DONE —
+
+• Session Property Whitelist Service: xsmid added
+• OAuth2 Provider Persistent Claims: xsmid added
+• OAuth2 Provider Supported Claims: xsmid added
+• Always Return Claims in ID Token: ON
+• Enable OAuth2 Provider Overrides on client: ON
+
+— QUESTIONS —
+
+1. Does session.setProperty() in a Scripted Decision node persist to the OIDC Claims Script at token issuance time? If not, what is the correct way?
+
+2. What is the correct expression syntax for the Set Session Properties node to read a value from sharedState? (${sharedState['xsmid']} stored a literal string for us)
+
+3. What is the Ping-recommended approach to pass a custom transaction ID from the authorize request (login_hint/state) into the id_token as a plain claim?
