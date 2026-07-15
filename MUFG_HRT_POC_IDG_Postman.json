@@ -1,0 +1,419 @@
+{
+  "info": {
+    "name": "MUFG HRT POC — IDG API Collection",
+    "description": "High-Risk Transaction POC — PingGateway (IDG) API endpoints for EIP / Client API Gateway integration.\n\nFlow:\n1. POST /api/authenticate → get xsmid\n2. DSH performs AIC SSO + HRT step-up + OAuth (AIC side)\n3. POST /api/validate → validate JWT + xsmid → APPROVED\n\nAll calls are to PingGateway (IDG). AIC calls are handled internally by DSH/SDK.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "_postman_id": "mufg-hrt-poc-idg-v1"
+  },
+  "variable": [
+    {
+      "key": "IDG_BASE_URL",
+      "value": "http://localhost:9090",
+      "description": "PingGateway (IDG) base URL. Replace with client environment IDG URL."
+    },
+    {
+      "key": "xsmid",
+      "value": "",
+      "description": "Auto-populated from /api/authenticate response"
+    },
+    {
+      "key": "jwt",
+      "value": "",
+      "description": "id_token JWT — set manually after DSH completes OAuth flow"
+    }
+  ],
+  "item": [
+    {
+      "name": "Step 1 — Health Check",
+      "item": [
+        {
+          "name": "IDG Hello (Health Check)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('IDG is reachable', function() {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "console.log('IDG Health Check:', pm.response.code, pm.response.text());"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{IDG_BASE_URL}}/hello",
+              "host": ["{{IDG_BASE_URL}}"],
+              "path": ["hello"]
+            },
+            "description": "Verify PingGateway is running and reachable.\n\nExpected: 200 OK with IDG version/status info."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Step 2 — Generate xsmid",
+      "item": [
+        {
+          "name": "POST /api/authenticate — Generate xsmid",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', function() {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('xsmid is present', function() {",
+                  "    var json = pm.response.json();",
+                  "    pm.expect(json.xsmid).to.be.a('string');",
+                  "    pm.expect(json.xsmid).to.have.lengthOf.above(10);",
+                  "});",
+                  "",
+                  "// Auto-save xsmid to collection variable",
+                  "var json = pm.response.json();",
+                  "if (json.xsmid) {",
+                  "    pm.collectionVariables.set('xsmid', json.xsmid);",
+                  "    console.log('xsmid saved:', json.xsmid);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amount\": 9000,\n  \"currency\": \"USD\",\n  \"toAccount\": \"ACCT-9876-5432\",\n  \"fromAccount\": \"ACCT-1234-5678\",\n  \"deviceId\": \"DTB-BROWSER-001\",\n  \"browserInfo\": \"Chrome/126 Windows\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{IDG_BASE_URL}}/api/authenticate",
+              "host": ["{{IDG_BASE_URL}}"],
+              "path": ["api", "authenticate"]
+            },
+            "description": "DTB calls IDG to generate a unique transaction identifier (xsmid) for the High-Risk Transaction.\n\nIDG generates a UUID and returns it as xsmid.\n\nThe xsmid is automatically saved to the collection variable for use in Step 3.\n\nFlow after this call:\n- DTB passes xsmid to DSH\n- DSH performs AIC step-up + OAuth (handled by DSH/SDK)\n- DSH returns id_token JWT containing xsmid claim\n- DTB calls /api/validate with jwt + xsmid"
+          },
+          "response": [
+            {
+              "name": "200 OK — xsmid generated",
+              "originalRequest": {
+                "method": "POST",
+                "header": [{"key": "Content-Type", "value": "application/json"}],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"amount\": 9000,\n  \"currency\": \"USD\",\n  \"toAccount\": \"ACCT-9876-5432\",\n  \"fromAccount\": \"ACCT-1234-5678\",\n  \"deviceId\": \"DTB-BROWSER-001\",\n  \"browserInfo\": \"Chrome/126 Windows\"\n}"
+                },
+                "url": {"raw": "{{IDG_BASE_URL}}/api/authenticate"}
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "body": "{\n  \"xsmid\": \"9a691a63-de29-4b54-9749-d842cb3554b9\",\n  \"issuedAt\": \"2026-07-15T11:22:00Z\",\n  \"expiresIn\": 3600\n}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Step 3 — Validate JWT",
+      "item": [
+        {
+          "name": "POST /api/validate — Validate JWT + xsmid",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "// Verify xsmid is set",
+                  "var xsmid = pm.collectionVariables.get('xsmid');",
+                  "if (!xsmid) {",
+                  "    console.warn('WARNING: xsmid not set — run Step 2 first');",
+                  "}",
+                  "",
+                  "// Verify jwt is set",
+                  "var jwt = pm.collectionVariables.get('jwt');",
+                  "if (!jwt) {",
+                  "    console.warn('WARNING: jwt not set — complete DSH OAuth flow first');",
+                  "    console.warn('After DSH callback, copy id_token and set jwt variable');",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', function() {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Decision is APPROVED', function() {",
+                  "    var json = pm.response.json();",
+                  "    pm.expect(json.valid).to.be.true;",
+                  "    pm.expect(json.decision).to.equal('APPROVED');",
+                  "});",
+                  "",
+                  "pm.test('xsmid matches', function() {",
+                  "    var json = pm.response.json();",
+                  "    var reqXsmid = pm.collectionVariables.get('xsmid');",
+                  "    pm.expect(json.xsmid).to.equal(reqXsmid);",
+                  "});",
+                  "",
+                  "pm.test('acr is HRT', function() {",
+                  "    var json = pm.response.json();",
+                  "    pm.expect(json.acr).to.equal('HRT');",
+                  "});",
+                  "",
+                  "var json = pm.response.json();",
+                  "console.log('Validation Result:', json.decision);",
+                  "console.log('Match Method:', json.matchMethod);",
+                  "console.log('userId:', json.userId);",
+                  "console.log('acr:', json.acr);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jwt\": \"{{jwt}}\",\n  \"xsmid\": \"{{xsmid}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{IDG_BASE_URL}}/api/validate",
+              "host": ["{{IDG_BASE_URL}}"],
+              "path": ["api", "validate"]
+            },
+            "description": "DTB sends the id_token JWT and xsmid to IDG for validation.\n\nIDG calls AIC /oauth2/idtokeninfo to:\n1. Verify JWT signature (RS256)\n2. Verify issuer (AIC)\n3. Verify audience (ig-poc-client)\n4. Verify expiry\n5. Read xsmid claim from JWT\n6. Match xsmid from request with xsmid in JWT\n7. Verify acr=HRT (confirms HRTStepUpJourney ran)\n\nPrerequisites:\n- Run Step 2 first to get xsmid (auto-saved)\n- Complete DSH OAuth flow to get JWT\n- Set 'jwt' collection variable with id_token value\n\nMatch Methods:\n- JWT_CLAIM: xsmid found as plain claim in JWT (primary)\n- S_HASH: xsmid verified via s_hash = base64url(SHA256(xsmid)[0:16]) (fallback)"
+          },
+          "response": [
+            {
+              "name": "200 APPROVED — xsmid matched via JWT claim",
+              "originalRequest": {
+                "method": "POST",
+                "header": [{"key": "Content-Type", "value": "application/json"}],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"jwt\": \"<id_token>\",\n  \"xsmid\": \"9a691a63-de29-4b54-9749-d842cb3554b9\"\n}"
+                },
+                "url": {"raw": "{{IDG_BASE_URL}}/api/validate"}
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "body": "{\n  \"valid\": true,\n  \"decision\": \"APPROVED\",\n  \"xsmid\": \"9a691a63-de29-4b54-9749-d842cb3554b9\",\n  \"userId\": \"ffa2c3a2-5cbf-4144-85c5-00b805389fb6\",\n  \"acr\": \"HRT\",\n  \"expiresAt\": 1784131424,\n  \"matchMethod\": \"JWT_CLAIM\",\n  \"message\": \"HRT transaction validated successfully\"\n}"
+            },
+            {
+              "name": "200 APPROVED — xsmid matched via s_hash",
+              "originalRequest": {
+                "method": "POST",
+                "header": [{"key": "Content-Type", "value": "application/json"}],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"jwt\": \"<id_token>\",\n  \"xsmid\": \"9a691a63-de29-4b54-9749-d842cb3554b9\"\n}"
+                },
+                "url": {"raw": "{{IDG_BASE_URL}}/api/validate"}
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "body": "{\n  \"valid\": true,\n  \"decision\": \"APPROVED\",\n  \"xsmid\": \"9a691a63-de29-4b54-9749-d842cb3554b9\",\n  \"userId\": \"ffa2c3a2-5cbf-4144-85c5-00b805389fb6\",\n  \"acr\": \"HRT\",\n  \"expiresAt\": 1784131424,\n  \"matchMethod\": \"S_HASH\",\n  \"message\": \"HRT transaction validated via s_hash binding\"\n}"
+            },
+            {
+              "name": "401 REJECTED — Token expired",
+              "originalRequest": {
+                "method": "POST",
+                "header": [{"key": "Content-Type", "value": "application/json"}],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"jwt\": \"<expired_id_token>\",\n  \"xsmid\": \"9a691a63-de29-4b54-9749-d842cb3554b9\"\n}"
+                },
+                "url": {"raw": "{{IDG_BASE_URL}}/api/validate"}
+              },
+              "status": "Unauthorized",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "body": "{\n  \"valid\": false,\n  \"error\": \"TOKEN_INVALID\",\n  \"message\": \"AIC rejected id_token — status: 400\"\n}"
+            },
+            {
+              "name": "401 REJECTED — xsmid mismatch",
+              "originalRequest": {
+                "method": "POST",
+                "header": [{"key": "Content-Type", "value": "application/json"}],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"jwt\": \"<id_token>\",\n  \"xsmid\": \"wrong-xsmid-value\"\n}"
+                },
+                "url": {"raw": "{{IDG_BASE_URL}}/api/validate"}
+              },
+              "status": "Unauthorized",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "body": "{\n  \"valid\": false,\n  \"error\": \"XSMID_MISMATCH\",\n  \"message\": \"xsmid does not match JWT\",\n  \"requestXsmid\": \"wrong-xsmid-value\",\n  \"jwtXsmid\": \"9a691a63-de29-4b54-9749-d842cb3554b9\"\n}"
+            },
+            {
+              "name": "400 BAD REQUEST — Missing params",
+              "originalRequest": {
+                "method": "POST",
+                "header": [{"key": "Content-Type", "value": "application/json"}],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"jwt\": \"<id_token>\"\n}"
+                },
+                "url": {"raw": "{{IDG_BASE_URL}}/api/validate"}
+              },
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "body": "{\n  \"valid\": false,\n  \"error\": \"MISSING_PARAMS\",\n  \"message\": \"jwt and xsmid are required\"\n}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Step 4 — Negative Tests",
+      "item": [
+        {
+          "name": "Validate — Wrong xsmid (should REJECT)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 401', function() {",
+                  "    pm.response.to.have.status(401);",
+                  "});",
+                  "pm.test('Decision is REJECTED', function() {",
+                  "    var json = pm.response.json();",
+                  "    pm.expect(json.valid).to.be.false;",
+                  "    pm.expect(json.error).to.equal('XSMID_MISMATCH');",
+                  "});",
+                  "console.log('Negative test PASSED — wrong xsmid correctly rejected');"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{"key": "Content-Type", "value": "application/json"}],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jwt\": \"{{jwt}}\",\n  \"xsmid\": \"00000000-0000-0000-0000-000000000000\"\n}",
+              "options": {"raw": {"language": "json"}}
+            },
+            "url": {
+              "raw": "{{IDG_BASE_URL}}/api/validate",
+              "host": ["{{IDG_BASE_URL}}"],
+              "path": ["api", "validate"]
+            },
+            "description": "Negative test — send valid JWT but WRONG xsmid.\nIDG should reject with XSMID_MISMATCH.\nVerifies that xsmid binding is enforced."
+          }
+        },
+        {
+          "name": "Validate — No JWT (should reject 400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 400', function() {",
+                  "    pm.response.to.have.status(400);",
+                  "});",
+                  "pm.test('Error is MISSING_PARAMS', function() {",
+                  "    var json = pm.response.json();",
+                  "    pm.expect(json.error).to.equal('MISSING_PARAMS');",
+                  "});",
+                  "console.log('Negative test PASSED — missing jwt correctly rejected');"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{"key": "Content-Type", "value": "application/json"}],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"xsmid\": \"{{xsmid}}\"\n}",
+              "options": {"raw": {"language": "json"}}
+            },
+            "url": {
+              "raw": "{{IDG_BASE_URL}}/api/validate",
+              "host": ["{{IDG_BASE_URL}}"],
+              "path": ["api", "validate"]
+            },
+            "description": "Negative test — send xsmid without jwt.\nIDG should reject with 400 MISSING_PARAMS."
+          }
+        },
+        {
+          "name": "Validate — Tampered JWT (should reject)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 401', function() {",
+                  "    pm.response.to.have.status(401);",
+                  "});",
+                  "pm.test('Token rejected', function() {",
+                  "    var json = pm.response.json();",
+                  "    pm.expect(json.valid).to.be.false;",
+                  "});",
+                  "console.log('Negative test PASSED — tampered JWT correctly rejected');"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{"key": "Content-Type", "value": "application/json"}],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jwt\": \"eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzI1NiJ9.TAMPERED_PAYLOAD.INVALID_SIGNATURE\",\n  \"xsmid\": \"{{xsmid}}\"\n}",
+              "options": {"raw": {"language": "json"}}
+            },
+            "url": {
+              "raw": "{{IDG_BASE_URL}}/api/validate",
+              "host": ["{{IDG_BASE_URL}}"],
+              "path": ["api", "validate"]
+            },
+            "description": "Negative test — send tampered JWT with invalid signature.\nIDG calls AIC /idtokeninfo which rejects it.\nVerifies cryptographic validation is enforced."
+          }
+        }
+      ]
+    }
+  ]
+}
