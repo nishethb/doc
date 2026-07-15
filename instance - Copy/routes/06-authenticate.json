@@ -1,0 +1,11 @@
+{
+  "name": "authenticate-route",
+  "condition": "${request.uri.path == '/api/authenticate'}",
+  "handler": {
+    "type": "ScriptableHandler",
+    "config": {
+      "type": "application/x-groovy",
+      "file": "authenticate.groovy"
+    }
+  }
+}

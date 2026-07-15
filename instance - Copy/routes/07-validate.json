@@ -1,0 +1,11 @@
+{
+  "name": "validate-route",
+  "condition": "${request.uri.path == '/api/validate'}",
+  "handler": {
+    "type": "ScriptableHandler",
+    "config": {
+      "type": "application/x-groovy",
+      "file": "validate.groovy"
+    }
+  }
+}
