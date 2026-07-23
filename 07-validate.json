@@ -1,0 +1,12 @@
+{
+  "name": "07-validate",
+  "baseURI": "http://localhost:9090",
+  "condition": "${contains(request.uri.path, '/token/validate')}",
+  "handler": {
+    "type": "ScriptableHandler",
+    "config": {
+      "type": "application/x-groovy",
+      "file": "validate.groovy"
+    }
+  }
+}
